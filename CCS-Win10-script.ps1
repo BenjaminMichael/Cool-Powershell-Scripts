@@ -1,66 +1,70 @@
-#This Script Creates AD Global Security Groups (if they dont exist) for All OUs CCS-Win10 and then it adds computers in those OUs to the group
-#by: Ben Riemersma
+#This Script Creates AD Global Security Groups (if they dont exist) for All OUs below 'CCS-Win10'
+#then it adds computers in those OUs to the group for that OU
+#and if its in a group for one of the other OUs it takes it out but it is important to never delete the proper group
+#(this would cause a momentary loss of the role based software provisioning
+#that these groups correspond to)
 #
-#There is an error check to see if the total number of OUs matches the number of OUs we modify.  If it logs an error then you probably have OUs more than 4 levels deep.
+#There is an error check to see if the total number of OUs matches the number of OUs we modify.
+#If it logs an error then you probably have OUs more than 4 levels deep.
 #
 
 
 function makeGroupsAndAddComputers(){
 
 
-$myLogData ="$(Get-Date) `r`n"
-$global:computersAddedToEucAASitesPC = 0
-$global:computersThatHaveChanged = 0
+    $myLogData ="$(Get-Date) `r`n"
+    $global:computersAddedToEucAASitesPC = 0
+    $global:computersThatHaveChanged = 0
 
 
-function shortenNames($myParam){
-    switch ($myParam)
-    {
-        "athletics"  {$newName = "Ath"}
-        "classroom"  {$newName = "Class"}
-        "classrooms"  {$newName = "Class"}
-        "communication studies" {$newName = "commstudies"}
-        "ford school" {$newName = "Ford"}
-        "ITS VDI Images" {$newName = "VDI"}
-        "kinesiology" {$newName = "Kines"}
-        "library" {$newName = "Lib"}
-        "medical school" {$newName = "medschool"}
-        "Observatory Lodge classroom" {$newName = "KinesLodge"}
-        "pharmacy" {$newName = "Phar"}
-        "virtual sites" {$newName = "VSites"}
+    function shortenNames($myParam){
+        switch ($myParam)
+        {
+            "athletics"  {$newName = "Ath"}
+            "classroom"  {$newName = "Class"}
+            "classrooms"  {$newName = "Class"}
+            "communication studies" {$newName = "commstudies"}
+            "ford school" {$newName = "Ford"}
+            "ITS VDI Images" {$newName = "VDI"}
+            "kinesiology" {$newName = "Kines"}
+            "library" {$newName = "Lib"}
+            "medical school" {$newName = "medschool"}
+            "Observatory Lodge classroom" {$newName = "KinesLodge"}
+            "pharmacy" {$newName = "Phar"}
+            "virtual sites" {$newName = "VSites"}
 
-        default {$newName = $myParam}
+            default {$newName = $myParam}
+        }
+
+    return $newName
     }
 
-return $newName
-}
+    function checkIfMemberAddIfNot{
 
-function checkIfMemberAddIfNot{
+    param ([string]$ouObject, [string]$targetGroup, $changedCPUCount)
+    #
+    #This function takes in 3 parameters:
+    # ouObject is an OU that we check to see if any computers in that OU (searchscope one level) are not in the target group and if not we add them
+    # targetGroup is the group we expect to see
+    # changedCPUCount is a variable for tracking how many changes we make throughout the entire lifecycle of makeGroupsAndAddComputers()
 
-param ([string]$ouObject, [string]$targetGroup, $changedCPUCount)
-#
-#This function takes in 3 parameters:
-# ouObject is an OU that we check to see if any computers in that OU (searchscope one level) are not in the target group and if not we add them
-# targetGroup is the group we expect to see
-# changedCPUCount is a variable for tracking how many changes we make throughout the entire lifecycle of makeGroupsAndAddComputers()
+    #
+    #Check to see if our targetGroup exists and if not we create it
+    #
+    try{$myGroupCheck = Get-ADGroup $targetGroup}catch{if($_.Exception.Message -like "Cannot find object*"){New-ADGroup -Name $targetGroup -GroupCategory Security -GroupScope Global -Path "OU=Sites,OU=AppsAnywhere,OU=ComputerGroups,OU=Groups,OU=EUC,OU=Products,OU=UMICH,DC=adsroot,DC=itcs,DC=umich,DC=edu" }}
 
-#
-#Check to see if our targetGroup exists and if not we create it
-#
-try{$myGroupCheck = Get-ADGroup $targetGroup}catch{if($_.Exception.Message -like "Cannot find object*"){New-ADGroup -Name $targetGroup -GroupCategory Security -GroupScope Global -Path "OU=Sites,OU=AppsAnywhere,OU=ComputerGroups,OU=Groups,OU=EUC,OU=Products,OU=UMICH,DC=adsroot,DC=itcs,DC=umich,DC=edu" }}
+    #
+    #group check and correct old incorrect groups (never remove the correct group)
+    #
+    $listOfComputer=@()
+    Get-ADComputer -SearchBase $ouObject -SearchScope OneLevel -filter {name -like "S-*"} -properties Name, MemberOf | ForEach-Object {$myMemberz=$_.memberOf;$numberofMemberz = $myMemberz.count;for($i=0;$i -lt $numberofMemberz;$i++){Add-ADGroupMember -Identity $targetGroup -Members $_;if((!$myMemberz[$i].contains($targetGroup)) -and ($myMemberz[$i] -ilike "CN=euc-aa-site-*")){Remove-ADGroupMember -identity $myMemberz[$i] -Members $_ -Confirm:$false;$global:computersThatHaveChanged++}} }
 
-#
-#group check and correct old incorrect groups (never remove the correct group)
-#
-$listOfComputer=@()
-Get-ADComputer -SearchBase $ouObject -SearchScope OneLevel -filter {name -like "S-*"} -properties Name, MemberOf | ForEach-Object {$myMemberz=$_.memberOf;$numberofMemberz = $myMemberz.count;for($i=0;$i -lt $numberofMemberz;$i++){Add-ADGroupMember -Identity $targetGroup -Members $_;if((!$myMemberz[$i].contains($targetGroup)) -and ($myMemberz[$i] -ilike "CN=euc-aa-site-*")){Remove-ADGroupMember -identity $myMemberz[$i] -Members $_ -Confirm:$false;$global:computersThatHaveChanged++}} }
+    #
+    #Next we will see if they are in euc-aa-sites-allPc, add them if they are not and make a note of it in the logs.
+    #
+    Get-ADComputer -SearchBase $ouObject -SearchScope OneLevel -filter {name -like "S-*"} -Properties memberOf | ForEach-Object {if ($_.memberOf -ilike "*euc-aa-Sites-PC*"){<#do nothing #>}else{add-adgroupmember -Identity "euc-aa-Sites-PC" -Members $_ ;$global:computersAddedToEucAASitesPC++}}
 
-#
-#Next we will see if they are in euc-aa-sites-allPc, add them if they are not and make a note of it in the logs.
-#
-Get-ADComputer -SearchBase $ouObject -SearchScope OneLevel -filter {name -like "S-*"} -Properties memberOf | ForEach-Object {if ($_.memberOf -ilike "*euc-aa-Sites-PC*"){<#do nothing #>}else{add-adgroupmember -Identity "euc-aa-Sites-PC" -Members $_ ;$global:computersAddedToEucAASitesPC++}}
-          
-}
+    }
 
 #
 # What we are trying to do is run our function checkIfMemberAddIfNot() on all the computers in all the OUs in the
@@ -79,10 +83,10 @@ Get-ADOrganizationalUnit -SearchBase $sourceOU -SearchScope Subtree -filter * | 
 
 $tempObjArray | ForEach-Object {
 
-$finalAnswer=@() #had to use two arrays one called finalanswer and then one OUTSIDE this for-each-function called [array]masterGroupList
-$currentAnswer=@()
+    $finalAnswer=@() #had to use two arrays one called finalanswer and then one OUTSIDE this for-each-function called [array]masterGroupList
+    $currentAnswer=@()
 
-#if the object is not null
+    #if the object is not null
     if ($_ -ne $null){
         #create a parent
         $myParent = (([adsi]"LDAP://$($_.DistinguishedName)").Parent).Substring(7)
@@ -146,17 +150,19 @@ $currentAnswer=@()
               [array]$masterGroupList += "$($finalAnswer)`r`n"
    }
 
-   #checking for missed OUs
-if($tempObjArray.count -ne $masterGroupList.count){$myLogData += "Debug we did not capture all the OUs.  $($tempObjArray.count) actual objects but only $($masterGroupList.count) group names were created.`r`n"}else{$myLogData += "0 OUs were missed because the tree was too many levels deep :)`r`n" }
-    #debug data
-$myLogData += "$($global:computersAddedToEucAASitesPC) New Computers added to euc-aa-sites-PC `r`n"
-$myLogData += "$($global:computersThatHaveChanged) Computers moved OUs (New Computers are not counted in this total) `r`n"
+    #checking for missed OUs
+    if($tempObjArray.count -ne $masterGroupList.count){$myLogData += "Debug we did not capture all the OUs.  $($tempObjArray.count) actual objects but only $($masterGroupList.count) group names were created.`r`n"}else{$myLogData += "0 OUs were missed because the tree was too many levels deep :)`r`n" }
+    
+    #results data:
+    $myLogData += "$($global:computersAddedToEucAASitesPC) New Computers added to euc-aa-sites-PC `r`n"
+    $myLogData += "$($global:computersThatHaveChanged) Computers moved OUs (New Computers are not counted in this total) `r`n"
+    $myLogData += "$($masterGroupList.count) OUs were found in CCS-Win10 `r`n"
 
-$myLogData += "$($masterGroupList.count) OUs were found in CCS-Win10 `r`n"
-if (Test-Path "C:\Windows\EUC\Log\CCS-Win10Script.log"){
-$myLogData | Add-Content "C:\Windows\EUC\Log\CCS-Win10Script.log"}else{
-$myLogData | Out-File "C:\Windows\EUC\Log\CCS-Win10Script.log"
-}
+    if (Test-Path "C:\Windows\EUC\Log\CCS-Win10Script.log")
+    {
+        $myLogData | Add-Content "C:\Windows\EUC\Log\CCS-Win10Script.log"}else{
+        $myLogData | Out-File "C:\Windows\EUC\Log\CCS-Win10Script.log"
+    }
 }
 
 
