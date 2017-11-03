@@ -8,7 +8,7 @@ $value = "<# special value goes here.  this is set during the SCCM task sequence
 $specialValueExist = $false
 $key = Get-Item -LiteralPath $RegKeyPath
 $altKey = Get-Item -LiteralPath $altRegKeyPath
-if ($Key.GetValue($Value) -ne $null){$finCoreValueExist = $true}else{if($altKey.GetValue($value) -ne $null){$finCoreValueExist = $true}}
+if ($Key.GetValue($Value) -ne $null){$specialValueExist = $true}else{if($altKey.GetValue($value) -ne $null){$specialValueExist = $true}}
 
 Function confirmPath($potentialTarget){
 if (test-path $potentialTarget){Get-ChildItem -Path $potentialTarget -Recurse -Filter * | ForEach-Object{if($_.LastWriteTime -lt (Get-Date).AddDays(-7)){secureDelete($_.VersionInfo.FileName)}}}
